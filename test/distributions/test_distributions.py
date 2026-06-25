@@ -48,6 +48,7 @@ from torch.distributions import (
     Binomial,
     Categorical,
     Cauchy,
+    Chi,
     Chi2,
     constraints,
     ContinuousBernoulli,
@@ -68,6 +69,7 @@ from torch.distributions import (
     Kumaraswamy,
     Laplace,
     LKJCholesky,
+    Logistic,
     LogisticNormal,
     LogNormal,
     LowRankMultivariateNormal,
@@ -80,10 +82,12 @@ from torch.distributions import (
     OneHotCategoricalStraightThrough,
     Pareto,
     Poisson,
+    Rayleigh,
     RelaxedBernoulli,
     RelaxedOneHotCategorical,
     StudentT,
     TransformedDistribution,
+    Triangular,
     Uniform,
     VonMises,
     Weibull,
@@ -3567,6 +3571,293 @@ class TestDistributions(DistributionsTestCase):
                 f"Laplace(loc={loc}, scale={scale})",
             )
 
+    def test_logistic(self):
+        loc = torch.randn(5, 5, requires_grad=True)
+        scale = torch.randn(5, 5).abs().requires_grad_()
+        loc_1d = torch.randn(1, requires_grad=True)
+        scale_1d = torch.randn(1).abs().requires_grad_()
+        self.assertEqual(Logistic(loc, scale).sample().size(), (5, 5))
+        self.assertEqual(Logistic(loc, scale).sample((7,)).size(), (7, 5, 5))
+        self.assertEqual(Logistic(loc_1d, scale_1d).sample((1,)).size(), (1, 1))
+        self.assertEqual(Logistic(loc_1d, scale_1d).sample().size(), (1,))
+        self.assertEqual(Logistic(0.2, 0.6).sample((1,)).size(), (1,))
+
+        self._gradcheck_log_prob(Logistic, (loc, scale))
+        self._gradcheck_log_prob(Logistic, (loc, 1.0))
+        self._gradcheck_log_prob(Logistic, (0.0, scale))
+
+        dist = Logistic(loc, scale)
+        u = torch.rand(5, 5)
+        x = dist.icdf(u)
+        self.assertEqual(dist.cdf(x), u, atol=1e-4, rtol=0)
+        self.assertEqual(dist.mean, loc)
+        self.assertEqual(dist.mode, loc)
+
+        z = dist.rsample()
+        z.sum().backward()
+        self.assertIsNotNone(loc.grad)
+        self.assertIsNotNone(scale.grad)
+        loc.grad.zero_()
+        scale.grad.zero_()
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_logistic_logprob(self):
+        loc = torch.randn(5, 1, requires_grad=True)
+        scale = torch.randn(5, 1).abs().requires_grad_()
+
+        def ref_log_prob(idx, x, log_prob):
+            l = loc.view(-1)[idx].detach().cpu()
+            s = scale.view(-1)[idx].detach().cpu()
+            expected = scipy.stats.logistic.logpdf(x.cpu(), loc=l, scale=s)
+            self.assertEqual(log_prob, expected, atol=1e-3, rtol=0)
+
+        self._check_log_prob(Logistic(loc, scale), ref_log_prob)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    @set_default_dtype_if_supported(torch.double)
+    def test_logistic_sample(self):
+        set_rng_seed(1)  # see Note [Randomized statistical tests]
+        for loc, scale in product([-1.0, 0.0, 1.0], [0.1, 1.0, 10.0]):
+            self._check_sampler_sampler(
+                Logistic(loc, scale),
+                scipy.stats.logistic(loc=loc, scale=scale),
+                f"Logistic(loc={loc}, scale={scale})",
+            )
+
+    def test_rayleigh(self):
+        scale = torch.randn(5, 5).abs().requires_grad_()
+        scale_1d = torch.randn(1).abs().requires_grad_()
+        self.assertEqual(Rayleigh(scale).sample().size(), (5, 5))
+        self.assertEqual(Rayleigh(scale).sample((7,)).size(), (7, 5, 5))
+        self.assertEqual(Rayleigh(scale_1d).sample((1,)).size(), (1, 1))
+        self.assertEqual(Rayleigh(scale_1d).sample().size(), (1,))
+        self.assertEqual(Rayleigh(0.6).sample((1,)).size(), (1,))
+
+        self._gradcheck_log_prob(Rayleigh, (scale,))
+        self._gradcheck_log_prob(Rayleigh, (1.0,))
+
+        dist = Rayleigh(scale)
+        u = torch.rand(5, 5).clamp(0.01, 0.99)
+        x = dist.icdf(u)
+        self.assertEqual(dist.cdf(x), u, atol=1e-4, rtol=0)
+        self.assertEqual(dist.mode, scale)
+
+        z = dist.rsample()
+        z.sum().backward()
+        self.assertIsNotNone(scale.grad)
+        scale.grad.zero_()
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_rayleigh_logprob(self):
+        scale = torch.randn(5, 1).abs().requires_grad_()
+
+        def ref_log_prob(idx, x, log_prob):
+            s = scale.view(-1)[idx].detach().cpu()
+            expected = scipy.stats.rayleigh.logpdf(x.cpu(), scale=s)
+            self.assertEqual(log_prob, expected, atol=1e-3, rtol=0)
+
+        self._check_log_prob(Rayleigh(scale), ref_log_prob)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    @set_default_dtype_if_supported(torch.double)
+    def test_rayleigh_sample(self):
+        set_rng_seed(1)  # see Note [Randomized statistical tests]
+        for scale in [0.1, 1.0, 10.0]:
+            self._check_sampler_sampler(
+                Rayleigh(scale),
+                scipy.stats.rayleigh(scale=scale),
+                f"Rayleigh(scale={scale})",
+            )
+
+    def test_triangular(self):
+        low = torch.tensor([0.0, 1.0, -1.0]).requires_grad_()
+        high = torch.tensor([1.0, 3.0, 2.0]).requires_grad_()
+        peak = torch.tensor([0.3, 2.0, 0.0]).requires_grad_()
+        self.assertEqual(Triangular(low, high, peak).sample().size(), (3,))
+        self.assertEqual(Triangular(low, high, peak).sample((5,)).size(), (5, 3))
+        self.assertEqual(Triangular(0.0, 1.0, 0.5).sample().size(), ())
+
+        self._gradcheck_log_prob(Triangular, (low, high, peak))
+
+        dist = Triangular(low, high, peak)
+        u = torch.rand(3).clamp(0.01, 0.99)
+        x = dist.icdf(u)
+        self.assertEqual(dist.cdf(x), u, atol=1e-4, rtol=0)
+        self.assertEqual(dist.mode, peak)
+        self.assertEqual(dist.mean, (low + high + peak) / 3)
+
+        # Boundary modes (peak == low / peak == high) must not nan
+        for a, b, c in [(0.0, 1.0, 0.0), (0.0, 1.0, 1.0)]:
+            d = Triangular(a, b, c)
+            x = torch.linspace(a, b, 5)
+            lp = d.log_prob(x)
+            self.assertFalse(torch.isnan(lp).any())
+            self.assertFalse(torch.isinf(d.cdf(x)).any())
+
+        z = dist.rsample()
+        z.sum().backward()
+        self.assertIsNotNone(low.grad)
+        self.assertIsNotNone(high.grad)
+        self.assertIsNotNone(peak.grad)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_triangular_logprob(self):
+        low = torch.tensor([0.0, 1.0]).requires_grad_()
+        high = torch.tensor([2.0, 4.0]).requires_grad_()
+        peak = torch.tensor([0.5, 2.5]).requires_grad_()
+
+        def ref_log_prob(idx, x, log_prob):
+            a = low.view(-1)[idx].detach().cpu().item()
+            b = high.view(-1)[idx].detach().cpu().item()
+            c = peak.view(-1)[idx].detach().cpu().item()
+            expected = scipy.stats.triang(
+                (c - a) / (b - a), loc=a, scale=b - a
+            ).logpdf(x.cpu())
+            self.assertEqual(log_prob, expected, atol=1e-3, rtol=0)
+
+        self._check_log_prob(Triangular(low, high, peak), ref_log_prob)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    @set_default_dtype_if_supported(torch.double)
+    def test_triangular_sample(self):
+        set_rng_seed(1)  # see Note [Randomized statistical tests]
+        for low, high, peak in [
+            (0.0, 1.0, 0.3),
+            (0.0, 2.0, 1.0),
+            (-1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),  # peak == low
+            (0.0, 1.0, 1.0),  # peak == high
+        ]:
+            c = (peak - low) / (high - low)
+            self._check_sampler_sampler(
+                Triangular(low, high, peak),
+                scipy.stats.triang(c, loc=low, scale=high - low),
+                f"Triangular(low={low}, high={high}, peak={peak})",
+            )
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_logistic_rayleigh_entropy_stats(self):
+        for loc, scale in [(0.0, 1.0), (-1.0, 2.0)]:
+            d = Logistic(loc, scale)
+            ref = scipy.stats.logistic(loc=loc, scale=scale)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-5, rtol=0)
+        for scale in [0.5, 1.0, 2.0]:
+            d = Rayleigh(scale)
+            ref = scipy.stats.rayleigh(scale=scale)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-4, rtol=0)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_triangular_stats(self):
+        cases = [
+            (0.0, 1.0, 0.3),  # interior peak
+            (0.0, 2.0, 1.0),
+            (0.0, 1.0, 0.0),  # peak == low
+            (0.0, 1.0, 1.0),  # peak == high
+        ]
+        for low, high, peak in cases:
+            d = Triangular(low, high, peak)
+            c = (peak - low) / (high - low)
+            ref = scipy.stats.triang(c, loc=low, scale=high - low)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-5, rtol=0)
+            x = torch.tensor([low + 0.1 * (high - low), (low + high) / 2, high - 0.1 * (high - low)])
+            x = x.clamp(low, high)
+            self.assertEqual(
+                d.cdf(x).numpy(), ref.cdf(x.numpy()), atol=1e-4, rtol=0
+            )
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_chi_entropy_cdf(self):
+        for df in [1.0, 2.0, 5.0]:
+            d = Chi(df)
+            ref = scipy.stats.chi(df)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-4, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-4, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-4, rtol=0)
+            x = torch.tensor([0.5, 1.0, 2.0])
+            self.assertEqual(
+                d.cdf(x).numpy(), ref.cdf(x.numpy()), atol=1e-4, rtol=0
+            )
+            u = torch.tensor([0.1, 0.5, 0.9])
+            self.assertEqual(
+                d.icdf(u).numpy(), ref.ppf(u.numpy()), atol=1e-4, rtol=0
+            )
+
+    def test_rayleigh_chi_support_edges(self):
+        # Negative values are outside support: log_prob -> -inf, cdf -> 0
+        r = Rayleigh(1.0)
+        neg = torch.tensor([-1.0, -0.1])
+        self.assertEqual(r.log_prob(neg), torch.full_like(neg, float("-inf")))
+        self.assertEqual(r.cdf(neg), torch.zeros_like(neg))
+        c = Chi(2.0)
+        self.assertEqual(c.log_prob(neg), torch.full_like(neg, float("-inf")))
+        self.assertEqual(c.cdf(neg), torch.zeros_like(neg))
+
+    def test_chi_kl_matches_base_gamma(self):
+        # Monotone transform preserves KL; Chi KL must match base Gamma KL
+        p = Chi(torch.tensor([1.0, 2.0, 5.0]))
+        q = Chi(torch.tensor([2.0, 3.0, 4.0]))
+        kl_chi = kl_divergence(p, q)
+        kl_base = kl_divergence(p.base_dist, q.base_dist)
+        self.assertEqual(kl_chi, kl_base)
+
+    def test_triangular_invalid_params(self):
+        with self.assertRaises(ValueError):
+            Triangular(0.0, 1.0, 1.5, validate_args=True)
+        with self.assertRaises(ValueError):
+            Triangular(1.0, 0.0, 0.5, validate_args=True)
+
+    def test_chi(self):
+        df = torch.randn(5, 5).abs().add(0.5).requires_grad_()
+        df_1d = torch.randn(1).abs().add(0.5).requires_grad_()
+        self.assertEqual(Chi(df).sample().size(), (5, 5))
+        self.assertEqual(Chi(df).sample((7,)).size(), (7, 5, 5))
+        self.assertEqual(Chi(df_1d).sample((1,)).size(), (1, 1))
+        self.assertEqual(Chi(df_1d).sample().size(), (1,))
+        self.assertEqual(Chi(2.0).sample((1,)).size(), (1,))
+
+        self._gradcheck_log_prob(Chi, (df,))
+        self._gradcheck_log_prob(Chi, (2.0,))
+
+        dist = Chi(df)
+        z = dist.rsample()
+        z.sum().backward()
+        self.assertIsNotNone(df.grad)
+        df.grad.zero_()
+
+        # Chi(df=1) is HalfNormal(scale=1)
+        half_normal = HalfNormal(1.0)
+        chi_one = Chi(1.0)
+        x = torch.tensor([0.5, 1.0, 2.0])
+        self.assertEqual(chi_one.log_prob(x), half_normal.log_prob(x), atol=1e-4, rtol=0)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_chi_logprob(self):
+        df = torch.tensor([1.0, 2.0, 3.0, 5.0]).requires_grad_()
+
+        def ref_log_prob(idx, x, log_prob):
+            k = df.view(-1)[idx].detach().cpu()
+            expected = scipy.stats.chi(k).logpdf(x.cpu())
+            self.assertEqual(log_prob, expected, atol=1e-3, rtol=0)
+
+        self._check_log_prob(Chi(df), ref_log_prob)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    @set_default_dtype_if_supported(torch.double)
+    def test_chi_sample(self):
+        set_rng_seed(1)  # see Note [Randomized statistical tests]
+        for df in [1.0, 2.0, 5.0, 10.0]:
+            self._check_sampler_sampler(
+                Chi(df),
+                scipy.stats.chi(df),
+                f"Chi(df={df})",
+            )
+
     @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
     def test_gamma_shape(self):
         alpha = torch.randn(2, 3).exp().requires_grad_()
@@ -5716,6 +6007,7 @@ class TestKL(DistributionsTestCase):
         )
         cauchy = pairwise(Cauchy, [-2.0, 2.0, -3.0, 3.0], [1.0, 2.0, 1.0, 2.0])
         chi2 = pairwise(Chi2, [1.0, 2.0, 2.5, 5.0])
+        chi = pairwise(Chi, [1.0, 2.0, 2.5, 5.0])
         dirichlet = pairwise(
             Dirichlet,
             [[0.1, 0.2, 0.7], [0.5, 0.4, 0.1], [0.33, 0.33, 0.34], [0.2, 0.2, 0.4]],
@@ -5729,6 +6021,7 @@ class TestKL(DistributionsTestCase):
         )
         laplace = pairwise(Laplace, [-2.0, 4.0, -3.0, 6.0], [1.0, 2.5, 1.0, 2.5])
         lognormal = pairwise(LogNormal, [-2.0, 2.0, -3.0, 3.0], [1.0, 2.0, 1.0, 2.0])
+        rayleigh = pairwise(Rayleigh, [1.0, 2.0, 1.0, 2.0])
         normal = pairwise(Normal, [-2.0, 2.0, -3.0, 3.0], [1.0, 2.0, 1.0, 2.0])
         independent = (Independent(normal[0], 1), Independent(normal[1], 1))
         onehotcategorical = pairwise(
@@ -5775,6 +6068,7 @@ class TestKL(DistributionsTestCase):
             (binomial_vectorized_count, binomial_vectorized_count),
             (categorical, categorical),
             (cauchy, cauchy),
+            (chi, chi),
             (chi2, chi2),
             (chi2, exponential),
             (chi2, gamma),
@@ -5797,6 +6091,7 @@ class TestKL(DistributionsTestCase):
             (inversegamma, inversegamma),
             (laplace, laplace),
             (lognormal, lognormal),
+            (rayleigh, rayleigh),
             (laplace, normal),
             (normal, gumbel),
             (normal, laplace),

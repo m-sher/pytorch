@@ -12,6 +12,7 @@ from .beta import Beta
 from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi import Chi
 from .continuous_bernoulli import ContinuousBernoulli
 from .dirichlet import Dirichlet
 from .distribution import Distribution
@@ -33,6 +34,7 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
 from .poisson import Poisson
+from .rayleigh import Rayleigh
 from .transformed_distribution import TransformedDistribution
 from .uniform import Uniform
 from .utils import _sum_rightmost, euler_constant as _euler_gamma
@@ -336,6 +338,19 @@ def _kl_laplace_laplace(p, q):
     t2 = loc_abs_diff / q.scale
     t3 = scale_ratio * torch.exp(-loc_abs_diff / p.scale)
     return t1 + t2 + t3 - 1
+
+
+@register_kl(Rayleigh, Rayleigh)
+def _kl_rayleigh_rayleigh(p, q):
+    # KL(Rayleigh(s_p) || Rayleigh(s_q)) = log(s_q/s_p) + (s_p/s_q)^2 - 1
+    scale_ratio = p.scale / q.scale
+    return -scale_ratio.log() + scale_ratio.pow(2) - 1
+
+
+@register_kl(Chi, Chi)
+def _kl_chi_chi(p, q):
+    # Chi(df) = sqrt(Chi2(df)); monotone transform preserves KL between base Gamma dists.
+    return _kl_gamma_gamma(p.base_dist, q.base_dist)
 
 
 @register_kl(LowRankMultivariateNormal, LowRankMultivariateNormal)
