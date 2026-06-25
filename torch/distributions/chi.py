@@ -44,7 +44,8 @@ class Chi(TransformedDistribution):
     ) -> None:
         # Chi(df) = sqrt(Chi2(df)) = sqrt(Gamma(0.5*df, 0.5))
         base_dist = Gamma(0.5 * df, 0.5, validate_args=False)
-        super().__init__(base_dist, PowerTransform(0.5), validate_args=validate_args)
+        half = base_dist.rate.new_full((), 0.5)
+        super().__init__(base_dist, PowerTransform(half), validate_args=validate_args)
 
     def expand(self, batch_shape, _instance=None):
         new = self._get_checked_instance(Chi, _instance)
