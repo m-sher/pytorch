@@ -95,8 +95,7 @@ class Chi(TransformedDistribution):
         )
 
     def entropy(self):
-        # 0.5 * (log(2) + lgamma(k/2) - (k-1) * digamma(k/2)) + k/2  ... wait let me use formula
-        # H = ln(Gamma(k/2)) + 0.5*(k - ln(2) - (k-1)*digamma(k/2))
+        # H = lgamma(k/2) + 0.5*(k - log(2) - (k-1)*digamma(k/2))
         k = self.df
         half_k = k / 2
         return (
