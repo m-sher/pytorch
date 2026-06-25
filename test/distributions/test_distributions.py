@@ -3677,12 +3677,22 @@ class TestDistributions(DistributionsTestCase):
         self.assertEqual(Triangular(low, high, peak).sample((5,)).size(), (5, 3))
         self.assertEqual(Triangular(0.0, 1.0, 0.5).sample().size(), ())
 
+        self._gradcheck_log_prob(Triangular, (low, high, peak))
+
         dist = Triangular(low, high, peak)
         u = torch.rand(3).clamp(0.01, 0.99)
         x = dist.icdf(u)
         self.assertEqual(dist.cdf(x), u, atol=1e-4, rtol=0)
         self.assertEqual(dist.mode, peak)
         self.assertEqual(dist.mean, (low + high + peak) / 3)
+
+        # Boundary modes (peak == low / peak == high) must not nan
+        for a, b, c in [(0.0, 1.0, 0.0), (0.0, 1.0, 1.0)]:
+            d = Triangular(a, b, c)
+            x = torch.linspace(a, b, 5)
+            lp = d.log_prob(x)
+            self.assertFalse(torch.isnan(lp).any())
+            self.assertFalse(torch.isinf(d.cdf(x)).any())
 
         z = dist.rsample()
         z.sum().backward()
@@ -3711,13 +3721,61 @@ class TestDistributions(DistributionsTestCase):
     @set_default_dtype_if_supported(torch.double)
     def test_triangular_sample(self):
         set_rng_seed(1)  # see Note [Randomized statistical tests]
-        for low, high, peak in [(0.0, 1.0, 0.3), (0.0, 2.0, 1.0), (-1.0, 1.0, 0.0)]:
+        for low, high, peak in [
+            (0.0, 1.0, 0.3),
+            (0.0, 2.0, 1.0),
+            (-1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),  # peak == low
+            (0.0, 1.0, 1.0),  # peak == high
+        ]:
             c = (peak - low) / (high - low)
             self._check_sampler_sampler(
                 Triangular(low, high, peak),
                 scipy.stats.triang(c, loc=low, scale=high - low),
                 f"Triangular(low={low}, high={high}, peak={peak})",
             )
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_logistic_rayleigh_entropy_stats(self):
+        for loc, scale in [(0.0, 1.0), (-1.0, 2.0)]:
+            d = Logistic(loc, scale)
+            ref = scipy.stats.logistic(loc=loc, scale=scale)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-5, rtol=0)
+        for scale in [0.5, 1.0, 2.0]:
+            d = Rayleigh(scale)
+            ref = scipy.stats.rayleigh(scale=scale)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-4, rtol=0)
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_chi_entropy_cdf(self):
+        for df in [1.0, 2.0, 5.0]:
+            d = Chi(df)
+            ref = scipy.stats.chi(df)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-4, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-4, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-4, rtol=0)
+            x = torch.tensor([0.5, 1.0, 2.0])
+            self.assertEqual(
+                d.cdf(x).numpy(), ref.cdf(x.numpy()), atol=1e-4, rtol=0
+            )
+            u = torch.tensor([0.1, 0.5, 0.9])
+            self.assertEqual(
+                d.icdf(u).numpy(), ref.ppf(u.numpy()), atol=1e-4, rtol=0
+            )
+
+    def test_rayleigh_chi_support_edges(self):
+        # Negative values are outside support: log_prob -> -inf, cdf -> 0
+        r = Rayleigh(1.0)
+        neg = torch.tensor([-1.0, -0.1])
+        self.assertTrue(torch.isinf(r.log_prob(neg)).all())
+        self.assertEqual(r.log_prob(neg), torch.full_like(neg, float("-inf")))
+        self.assertEqual(r.cdf(neg), torch.zeros_like(neg))
+        c = Chi(2.0)
+        self.assertTrue(torch.isinf(c.log_prob(neg)).all())
 
     def test_chi(self):
         df = torch.randn(5, 5).abs().add(0.5).requires_grad_()
@@ -5927,7 +5985,6 @@ class TestKL(DistributionsTestCase):
             InverseGamma, [1.0, 2.5, 1.0, 2.5], [1.5, 1.5, 3.5, 3.5]
         )
         laplace = pairwise(Laplace, [-2.0, 4.0, -3.0, 6.0], [1.0, 2.5, 1.0, 2.5])
-        logistic = pairwise(Logistic, [-2.0, 4.0, -3.0, 6.0], [1.0, 2.5, 1.0, 2.5])
         lognormal = pairwise(LogNormal, [-2.0, 2.0, -3.0, 3.0], [1.0, 2.0, 1.0, 2.0])
         rayleigh = pairwise(Rayleigh, [1.0, 2.0, 1.0, 2.0])
         normal = pairwise(Normal, [-2.0, 2.0, -3.0, 3.0], [1.0, 2.0, 1.0, 2.0])

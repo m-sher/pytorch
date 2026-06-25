@@ -16,6 +16,13 @@ class Triangular(Distribution):
     r"""
     Creates a Triangular distribution parameterized by :attr:`low`, :attr:`high`, and :attr:`peak`.
 
+    The support is the closed interval ``[low, high]``. The mode is at :attr:`peak`,
+    which must satisfy ``low <= peak <= high`` and ``high > low``.
+
+    When :attr:`peak` equals :attr:`low` or :attr:`high`, the distribution degenerates
+    to a right- or left-triangular density (supported by SciPy's ``triang`` with
+    ``c in {0, 1}``).
+
     Example::
 
         >>> # xdoctest: +IGNORE_WANT("non-deterministic")
@@ -25,17 +32,19 @@ class Triangular(Distribution):
 
     Args:
         low (float or Tensor): lower range (inclusive)
-        high (float or Tensor): upper range (exclusive), must satisfy high > low
+        high (float or Tensor): upper range (inclusive), must satisfy high > low
         peak (float or Tensor): mode of the distribution, must satisfy low <= peak <= high
     """
 
-    # pyrefly: ignore [bad-override]
-    arg_constraints = {
-        "low": constraints.dependent(is_discrete=False, event_dim=0),
-        "high": constraints.dependent(is_discrete=False, event_dim=0),
-        "peak": constraints.dependent(is_discrete=False, event_dim=0),
-    }
     has_rsample = True
+
+    @property
+    def arg_constraints(self):
+        return {
+            "low": constraints.less_than(self.high),
+            "high": constraints.greater_than(self.low),
+            "peak": constraints.interval(self.low, self.high),
+        }
 
     @property
     def mean(self) -> Tensor:
@@ -81,44 +90,81 @@ class Triangular(Distribution):
     def rsample(self, sample_shape: _size = torch.Size()) -> Tensor:
         shape = self._extended_shape(sample_shape)
         u = torch.rand(shape, dtype=self.low.dtype, device=self.low.device)
-        a, b, c = self.low, self.high, self.peak
-        fc = (c - a) / (b - a)
-        # Inverse CDF: left side when u < F(c), right side otherwise
-        left = a + ((b - a) * (c - a) * u).sqrt()
-        right = b - ((b - a) * (b - c) * (1 - u)).sqrt()
-        return torch.where(u < fc, left, right)
+        return self.icdf(u)
 
     def log_prob(self, value):
         if self._validate_args:
             self._validate_sample(value)
         a, b, c = self.low, self.high, self.peak
-        # PDF = 2(x-a)/((b-a)(c-a)) for a <= x <= c
-        #     = 2(b-x)/((b-a)(b-c)) for c < x <= b
-        left_dens = 2 * (value - a) / ((b - a) * (c - a))
-        right_dens = 2 * (b - value) / ((b - a) * (b - c))
+        width = b - a
+        # PDF = 2(x-a)/((b-a)(c-a)) for a <= x <= c  (when c > a)
+        #     = 2(b-x)/((b-a)(b-c)) for c < x <= b  (when c < b)
+        # Boundary modes (c==a or c==b): only one side is active; the zero-width side is unused.
+        left_denom = width * (c - a)
+        right_denom = width * (b - c)
+        left_dens = torch.where(
+            c > a,
+            2 * (value - a) / left_denom.clamp(min=torch.finfo(value.dtype).tiny),
+            torch.zeros_like(value),
+        )
+        right_dens = torch.where(
+            c < b,
+            2 * (b - value) / right_denom.clamp(min=torch.finfo(value.dtype).tiny),
+            torch.zeros_like(value),
+        )
+        # When peak==low: density is only on the right branch (right-triangular)
+        # When peak==high: density is only on the left branch (left-triangular)
         dens = torch.where(value <= c, left_dens, right_dens)
+        dens = torch.where((c == a) & (value >= a) & (value <= b), right_dens, dens)
+        dens = torch.where((c == b) & (value >= a) & (value <= b), left_dens, dens)
         in_support = (value >= a) & (value <= b)
-        return torch.where(in_support, dens.log(), torch.full_like(dens, -inf))
+        return torch.where(in_support, dens.clamp(min=0).log(), torch.full_like(dens, -inf))
 
     def cdf(self, value):
         if self._validate_args:
             self._validate_sample(value)
         a, b, c = self.low, self.high, self.peak
-        left_cdf = (value - a).pow(2) / ((b - a) * (c - a))
-        right_cdf = 1 - (b - value).pow(2) / ((b - a) * (b - c))
+        width = b - a
+        left_cdf = torch.where(
+            c > a,
+            (value - a).pow(2) / (width * (c - a)),
+            torch.zeros_like(value),
+        )
+        right_cdf = torch.where(
+            c < b,
+            1 - (b - value).pow(2) / (width * (b - c)),
+            torch.ones_like(value),
+        )
         result = torch.where(value <= c, left_cdf, right_cdf)
+        # peak == low: F(x) = 1 - ((b-x)/(b-a))^2
+        result = torch.where(
+            c == a,
+            1 - (b - value).pow(2) / width.pow(2),
+            result,
+        )
+        # peak == high: F(x) = ((x-a)/(b-a))^2
+        result = torch.where(
+            c == b,
+            (value - a).pow(2) / width.pow(2),
+            result,
+        )
         result = torch.where(value < a, torch.zeros_like(result), result)
         result = torch.where(value > b, torch.ones_like(result), result)
-        return result
+        return result.clamp(0, 1)
 
     def icdf(self, value):
         a, b, c = self.low, self.high, self.peak
-        fc = (c - a) / (b - a)
-        left = a + ((b - a) * (c - a) * value).sqrt()
-        right = b - ((b - a) * (b - c) * (1 - value)).sqrt()
-        return torch.where(value < fc, left, right)
+        width = b - a
+        fc = torch.where(c > a, (c - a) / width, torch.zeros_like(width))
+        left = a + (width * (c - a).clamp(min=0) * value).sqrt()
+        right = b - (width * (b - c).clamp(min=0) * (1 - value)).sqrt()
+        result = torch.where(value < fc, left, right)
+        # peak == low: only right branch (fc == 0)
+        result = torch.where(c == a, b - (width.pow(2) * (1 - value)).sqrt(), result)
+        # peak == high: only left branch (fc == 1)
+        result = torch.where(c == b, a + (width.pow(2) * value).sqrt(), result)
+        return result
 
     def entropy(self):
-        # Entropy of triangular distribution: 0.5 - log(2 / (high - low))
-        # = 0.5 + log((high - low) / 2)
+        # Entropy of triangular distribution: 0.5 + log((high - low) / 2)
         return 0.5 + (self.high - self.low).log() - math.log(2)

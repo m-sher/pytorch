@@ -90,9 +90,12 @@ class Rayleigh(Distribution):
     def cdf(self, value):
         if self._validate_args:
             self._validate_sample(value)
-        return 1 - torch.exp(-value.pow(2) / (2 * self.scale.pow(2)))
+        cdf = 1 - torch.exp(-value.pow(2) / (2 * self.scale.pow(2)))
+        return torch.where(value >= 0, cdf, torch.zeros_like(cdf))
 
     def icdf(self, value):
+        finfo = torch.finfo(self.scale.dtype)
+        value = value.clamp(min=finfo.tiny, max=1.0 - finfo.eps)
         return self.scale * (-2 * (1 - value).log()).sqrt()
 
     def entropy(self):

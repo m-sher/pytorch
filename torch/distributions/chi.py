@@ -43,7 +43,7 @@ class Chi(TransformedDistribution):
         validate_args: bool | None = None,
     ) -> None:
         # Chi(df) = sqrt(Chi2(df)) = sqrt(Gamma(0.5*df, 0.5))
-        base_dist = Gamma(0.5 * df, 0.5, validate_args=False)
+        base_dist = Gamma(0.5 * df, 0.5, validate_args=validate_args)
         half = base_dist.rate.new_full((), 0.5)
         super().__init__(base_dist, PowerTransform(half), validate_args=validate_args)
 
