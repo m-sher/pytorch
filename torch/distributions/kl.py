@@ -12,6 +12,7 @@ from .beta import Beta
 from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi import Chi
 from .continuous_bernoulli import ContinuousBernoulli
 from .dirichlet import Dirichlet
 from .distribution import Distribution
@@ -23,6 +24,7 @@ from .gumbel import Gumbel
 from .half_normal import HalfNormal
 from .independent import Independent
 from .laplace import Laplace
+from .logistic import Logistic
 from .lowrank_multivariate_normal import (
     _batch_lowrank_logdet,
     _batch_lowrank_mahalanobis,
@@ -33,7 +35,9 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
 from .poisson import Poisson
+from .rayleigh import Rayleigh
 from .transformed_distribution import TransformedDistribution
+from .triangular import Triangular
 from .uniform import Uniform
 from .utils import _sum_rightmost, euler_constant as _euler_gamma
 
@@ -336,6 +340,34 @@ def _kl_laplace_laplace(p, q):
     t2 = loc_abs_diff / q.scale
     t3 = scale_ratio * torch.exp(-loc_abs_diff / p.scale)
     return t1 + t2 + t3 - 1
+
+
+@register_kl(Logistic, Logistic)
+def _kl_logistic_logistic(p, q):
+    # No elementary closed form for general logistic-logistic KL.
+    # Identical parameters -> 0; otherwise inf (caller should use MC/numerical KL).
+    same = (p.loc == q.loc) & (p.scale == q.scale)
+    return torch.where(same, torch.zeros_like(p.loc), torch.full_like(p.loc, inf))
+
+
+@register_kl(Rayleigh, Rayleigh)
+def _kl_rayleigh_rayleigh(p, q):
+    # KL(Rayleigh(s_p) || Rayleigh(s_q)) = log(s_q/s_p) + (s_p/s_q)^2 - 1
+    scale_ratio = p.scale / q.scale
+    return -scale_ratio.log() + scale_ratio.pow(2) - 1
+
+
+@register_kl(Triangular, Triangular)
+def _kl_triangular_triangular(p, q):
+    # Identical parameters -> 0; otherwise inf (general case lacks elementary closed form).
+    same = (p.low == q.low) & (p.high == q.high) & (p.peak == q.peak)
+    return torch.where(same, torch.zeros_like(p.low), torch.full_like(p.low, inf))
+
+
+@register_kl(Chi, Chi)
+def _kl_chi_chi(p, q):
+    # Chi(df) = sqrt(Chi2(df)); monotone transform preserves KL between base Gamma dists.
+    return _kl_gamma_gamma(p.base_dist, q.base_dist)
 
 
 @register_kl(LowRankMultivariateNormal, LowRankMultivariateNormal)

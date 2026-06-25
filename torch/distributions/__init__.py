@@ -77,6 +77,7 @@ from .beta import Beta
 from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi import Chi
 from .chi2 import Chi2
 from .constraint_registry import biject_to, transform_to
 from .continuous_bernoulli import ContinuousBernoulli
@@ -98,6 +99,7 @@ from .kumaraswamy import Kumaraswamy
 from .laplace import Laplace
 from .lkj_cholesky import LKJCholesky
 from .log_normal import LogNormal
+from .logistic import Logistic
 from .logistic_normal import LogisticNormal
 from .lowrank_multivariate_normal import LowRankMultivariateNormal
 from .mixture_same_family import MixtureSameFamily
@@ -108,11 +110,13 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalStraightThrough
 from .pareto import Pareto
 from .poisson import Poisson
+from .rayleigh import Rayleigh
 from .relaxed_bernoulli import RelaxedBernoulli
 from .relaxed_categorical import RelaxedOneHotCategorical
 from .studentT import StudentT
 from .transformed_distribution import TransformedDistribution
 from .transforms import *  # noqa: F403
+from .triangular import Triangular
 from .uniform import Uniform
 from .von_mises import VonMises
 from .weibull import Weibull
@@ -128,6 +132,7 @@ __all__ = [
     "Binomial",
     "Categorical",
     "Cauchy",
+    "Chi",
     "Chi2",
     "ContinuousBernoulli",
     "Dirichlet",
@@ -146,6 +151,7 @@ __all__ = [
     "Kumaraswamy",
     "LKJCholesky",
     "Laplace",
+    "Logistic",
     "LogNormal",
     "LogisticNormal",
     "LowRankMultivariateNormal",
@@ -161,6 +167,8 @@ __all__ = [
     "RelaxedOneHotCategorical",
     "StudentT",
     "Poisson",
+    "Rayleigh",
+    "Triangular",
     "Uniform",
     "VonMises",
     "Weibull",
