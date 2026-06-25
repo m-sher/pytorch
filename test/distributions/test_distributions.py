@@ -3751,6 +3751,27 @@ class TestDistributions(DistributionsTestCase):
             self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-4, rtol=0)
 
     @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
+    def test_triangular_stats(self):
+        cases = [
+            (0.0, 1.0, 0.3),  # interior peak
+            (0.0, 2.0, 1.0),
+            (0.0, 1.0, 0.0),  # peak == low
+            (0.0, 1.0, 1.0),  # peak == high
+        ]
+        for low, high, peak in cases:
+            d = Triangular(low, high, peak)
+            c = (peak - low) / (high - low)
+            ref = scipy.stats.triang(c, loc=low, scale=high - low)
+            self.assertEqual(d.mean.item(), ref.mean(), atol=1e-5, rtol=0)
+            self.assertEqual(d.variance.item(), ref.var(), atol=1e-5, rtol=0)
+            self.assertEqual(d.entropy().item(), ref.entropy(), atol=1e-5, rtol=0)
+            x = torch.tensor([low + 0.1 * (high - low), (low + high) / 2, high - 0.1 * (high - low)])
+            x = x.clamp(low, high)
+            self.assertEqual(
+                d.cdf(x).numpy(), ref.cdf(x.numpy()), atol=1e-4, rtol=0
+            )
+
+    @unittest.skipIf(not TEST_NUMPY, "NumPy not found")
     def test_chi_entropy_cdf(self):
         for df in [1.0, 2.0, 5.0]:
             d = Chi(df)
@@ -3771,11 +3792,25 @@ class TestDistributions(DistributionsTestCase):
         # Negative values are outside support: log_prob -> -inf, cdf -> 0
         r = Rayleigh(1.0)
         neg = torch.tensor([-1.0, -0.1])
-        self.assertTrue(torch.isinf(r.log_prob(neg)).all())
         self.assertEqual(r.log_prob(neg), torch.full_like(neg, float("-inf")))
         self.assertEqual(r.cdf(neg), torch.zeros_like(neg))
         c = Chi(2.0)
-        self.assertTrue(torch.isinf(c.log_prob(neg)).all())
+        self.assertEqual(c.log_prob(neg), torch.full_like(neg, float("-inf")))
+        self.assertEqual(c.cdf(neg), torch.zeros_like(neg))
+
+    def test_chi_kl_matches_base_gamma(self):
+        # Monotone transform preserves KL; Chi KL must match base Gamma KL
+        p = Chi(torch.tensor([1.0, 2.0, 5.0]))
+        q = Chi(torch.tensor([2.0, 3.0, 4.0]))
+        kl_chi = kl_divergence(p, q)
+        kl_base = kl_divergence(p.base_dist, q.base_dist)
+        self.assertEqual(kl_chi, kl_base)
+
+    def test_triangular_invalid_params(self):
+        with self.assertRaises(ValueError):
+            Triangular(0.0, 1.0, 1.5, validate_args=True)
+        with self.assertRaises(ValueError):
+            Triangular(1.0, 0.0, 0.5, validate_args=True)
 
     def test_chi(self):
         df = torch.randn(5, 5).abs().add(0.5).requires_grad_()

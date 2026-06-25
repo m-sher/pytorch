@@ -95,6 +95,13 @@ class Chi(TransformedDistribution):
             torch.full_like(log_prob, -inf),
         )
 
+    def cdf(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        # PowerTransform inverse squares negatives, so guard before super().cdf
+        cdf = super().cdf(value.clamp(min=0))
+        return torch.where(value >= 0, cdf, torch.zeros_like(cdf))
+
     def entropy(self):
         # H = lgamma(k/2) + 0.5*(k - log(2) - (k-1)*digamma(k/2))
         k = self.df

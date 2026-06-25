@@ -91,6 +91,8 @@ class Logistic(Distribution):
         return torch.sigmoid(z)
 
     def icdf(self, value):
+        finfo = torch.finfo(self.loc.dtype)
+        value = value.clamp(min=finfo.tiny, max=1.0 - finfo.eps)
         return self.loc + self.scale * (value.log() - (1 - value).log())
 
     def entropy(self):
